@@ -33,6 +33,7 @@
 #include <grp.h>
 #include <sys/time.h>
 #include <time.h>
+#include <fnmatch.h>
 
 #include "bsd-openpty.h"
 #include "common.h"
@@ -61,6 +62,7 @@ char    *backend = NULL,
   *outfilename = NULL,
   *opt_ptyname = NULL,
   *opt_ttyname = NULL;
+const char*outputfile_match;
 int     verbose = 0,
   linebuff = 0,
   quiet = 0,
@@ -240,10 +242,17 @@ const char *char_repr(unsigned char ch)
   static char response[RESP_SZ] = {0};
   /* https://en.wikipedia.org/wiki/Control_character */
   static const char lowCtrlChrs[LOW_CRTL_SZ][RESP_SZ] = {
+#if 0
     "[NUL]", "[SOH]", "[STX]", "[ETX]", "[EOT]", "[ENQ]", "[ACK]", "[BEL]",
     "[BS]",  "[TAB]", "[LF]",  "[VT]",  "[FF]",  "[CR]",  "[SO]",  "[SI]",
     "[DLE]", "[DC1]", "[DC2]", "[DC3]", "[DC4]", "[NAK]", "[SYN]", "[ETB]",
     "[CAN]", "[EM]",  "[SUB]", "[ESC]", "[FS]",  "[GS]",  "[RS]",  "[US]",
+#else
+    "[NUL]", "[SOH]", "[STX]", "[ETX]", "[EOT]", "[ENQ]", "[ACK]", "\\b",
+    "\\b",  "\\t", "\\n",  "\\v",  "[FF]",  "\\r",  "[SO]",  "[SI]",
+    "[DLE]", "[DC1]", "[DC2]", "[DC3]", "[DC4]", "[NAK]", "[SYN]", "[ETB]",
+    "[CAN]", "[EM]",  "[SUB]", "\\e", "[FS]",  "[GS]",  "[RS]",  "[US]",
+#endif
     "' '" /* for space */
   };
 
@@ -278,13 +287,33 @@ void dumpbuff(int dir, char *buf, int buflen)
       {
         char dtime[9];
         struct tm *now = localtime(&timeVal.tv_sec);
-        strftime(dtime, sizeof(dtime), "%H:%M %S", now);
+        strftime(dtime, sizeof(dtime), "%H:%M:%S", now);
         snprintf(tstamp, sizeof(tstamp), "[%s.%06ld]", dtime, timeVal.tv_usec);
         //snprintf(tstamp, TSTAMP_SZ, "[%s:%s]   ", sec, usec);
       }
       else if (tstamp[0] == '[')
       {
-        memset(tstamp, ' ', strnlen(tstamp, TSTAMP_SZ));
+       // memset(tstamp, ' ', strnlen(tstamp, TSTAMP_SZ));
+      }
+      if (outputfile_match && !fnmatch(outputfile_match, buf + i, 0)){
+		char fname[2048];
+		ssize_t ret;
+		fprintf(stderr, "%20s : '%s'\n", "outputfile_match", outputfile_match);
+		fprintf(stderr, "%16s + %-2i : '%s'\n", "buf",  i, buf + i);
+		ret = snprintf(fname, sizeof(fname), "%s.%slog", outfilename, tstamp + 1);
+		fname[ret - 4] = '.';
+		fname[ret - 4 - 7 ] = '_';
+		fname[ret - 4 - 7 - 3 ] = '_';
+		fname[ret - 4 - 7 - 3 - 3 ] = '_';
+		fname[ret - 4 - 7 - 3 - 3 - 3 ] = '_';
+		fclose(outfile);
+		if ( (outfile = fopen(fname,"w")) == NULL){
+		  errorf("Couldn't open output file '%s' for write: %s\n",fname,strerror(errno));
+		}
+	        if (linebuff){
+		    setlinebuf(outfile);
+		}
+
       }
       fprintf(outfile, "%s", tstamp);
     }
@@ -332,8 +361,10 @@ void dumpbuff(int dir, char *buf, int buflen)
       /* should we end line? */
       lineChCnt = (ic == eol_ch) ? 0 : lineChCnt +1;
       /* separator */
+#if 0
       if (i + 1 < buflen && lineChCnt > 0)
         fprintf(outfile, ":");
+#endif
 
     }
     if (lineChCnt < 1 || i == (buflen - 1))
@@ -806,7 +837,7 @@ int main (int argc, char *argv[])
   outfile = stdout;
 
   /* Process options */
-  while ((c = getopt(argc, argv, "VTlqvs:o:p:t:m:u:g:/:e:f:")) != EOF)
+  while ((c = getopt(argc, argv, "VTlqvs:o:p:t:m:u:g:/:e:f:N:")) != EOF)
     switch (c) {
       case 'q':
 	quiet=1;
@@ -819,6 +850,9 @@ int main (int argc, char *argv[])
         break;
       case 'p':
         opt_ptyname = optarg;
+        break;
+      case 'N':
+        outputfile_match = optarg;
         break;
       case 't':
         opt_ttyname = optarg;
